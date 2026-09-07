@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { accessError, apiJson as json, runtime, reserveAiCall, preflight } from '@/lib/access';
 import { parseRequest, parseQuestion, parseReport, parseFollowup } from '@/lib/assessment';
 import type { RequestData } from '@/lib/assessment';
 
@@ -24,11 +24,11 @@ JSON格式：{"summary":"...","strengths":["..."],"unknowns":["..."],"actions":[
 只基于已有问答，缺少的信息明确列出，不重复生成整份报告。steps必须是2至6个对象，每项只有title与detail两个字符串；questions必须是1至6个字符串。title不超过100字，summary不超过500字，每项detail不超过400字。
 JSON格式：{"title":"...","summary":"...","steps":[{"title":"...","detail":"..."}],"questions":["下一步需确认的问题"]}。`;
 }
-function json(body: unknown, status = 200) { return Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } }); }
+export const OPTIONS = preflight;
 
 export async function POST(request: Request) {
-  const origin = request.headers.get('origin');
-  if (origin && origin !== new URL(request.url).origin) return json({ error: '请从本站页面发起请求。' }, 403);
+  const denied = await accessError(request);
+  if (denied) return denied;
   if (!request.headers.get('content-type')?.includes('application/json')) return json({ error: '请求格式不正确。' }, 415);
   if (Number(request.headers.get('content-length') || 0) > 24000) return json({ error: '内容过长，请减少输入。' }, 413);
   let data: RequestData;
@@ -38,13 +38,14 @@ export async function POST(request: Request) {
     data = parseRequest(JSON.parse(body));
   } catch { return json({ error: '回答信息不完整，请返回重试。' }, 400); }
   if (data.mode === 'question' && data.turns.length >= 10) return json({ kind: 'complete' });
-  const runtime = env as unknown as Record<string, string | undefined>;
+
   const key = runtime.DEEPSEEK_API_KEY;
   if (!key) return json({ error: 'AI 服务尚未配置好，请稍后再试。' }, 503);
-  // ponytail: Sites owner-only access bounds this pilot; add per-user quotas before opening it to a wider audience.
+  // Every provider attempt reserves one atomic daily quota slot, including format retries.
   const timeout = AbortSignal.timeout(55000);
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
+      if (!await reserveAiCall()) return json({ error: '今天的体验额度已用完，请明天再来。' }, 429);
       const response = await fetch('https://api.deepseek.com/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -75,3 +76,4 @@ export async function POST(request: Request) {
     return json({ error: error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? '这次响应时间较长，请重试。你的回答仍保留在当前页面。' : 'AI 连接中断，请重试。你的回答没有丢失。' }, 502);
   }
 }
+

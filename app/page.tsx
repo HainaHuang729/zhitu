@@ -6,9 +6,14 @@ import { initialQuestion } from '@/lib/assessment';
 import type { Question, Turn, Report, Followup, Topic, RequestData } from '@/lib/assessment';
 
 type Result = Question | { kind: 'complete' } | { kind: 'report'; report: Report } | { kind: 'followup'; followup: Followup };
+const apiBase = typeof window !== 'undefined' && window.location.hostname.toLowerCase() === 'hainahuang729.github.io' ? 'https://study-compass-amadeus.xiaoxuesheng729.chatgpt.site' : '';
 const topicLabels: Record<Topic, string> = { plan: '细化30天计划', direction: '比较可选方向', brief: '准备顾问咨询' };
 
 export default function Page() {
+  const [invite, setInvite] = useState('');
+  const [accessCode, setAccessCode] = useState('');
+  const [accessBusy, setAccessBusy] = useState(false);
+  const [accessNotice, setAccessNotice] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [frames, setFrames] = useState<Question[]>([initialQuestion]);
   const [report, setReport] = useState<Report | null>(null);
@@ -37,7 +42,7 @@ export default function Page() {
     try {
       async function call(input: RequestData): Promise<Result> {
         pending.current = input;
-        const response = await fetch('/api/assessment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal: active.signal });
+        const response = await fetch(apiBase + '/api/assessment', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Invite-Code': accessCode }, body: JSON.stringify(input), signal: active.signal });
         const result = await response.json() as Result & { error?: string };
         if (!response.ok) throw new Error(typeof result.error === 'string' ? result.error : '暂时连接不上 AI，请重试。');
         return result;
@@ -81,6 +86,24 @@ export default function Page() {
     const link = document.createElement('a'); link.href = url; link.download = '知途-留学规划报告.md'; link.click(); URL.revokeObjectURL(url);
   }
 
+  async function unlock(event: React.FormEvent) {
+    event.preventDefault();
+    if (!invite.trim() || accessBusy) return;
+    setAccessBusy(true); setAccessNotice('');
+    try {
+      const response = await fetch(apiBase + '/api/access', { method: 'POST', headers: { 'X-Invite-Code': invite.trim() }, signal: AbortSignal.timeout(15000) });
+      if (!response.ok) {
+        const result = await response.json() as { error?: string };
+        throw new Error(result.error || '暂时无法进入，请稍后再试。');
+      }
+      setAccessCode(invite.trim()); setInvite('');
+    } catch (error) { setAccessNotice(error instanceof Error ? error.message : '连接失败，请重试。'); }
+    finally { setAccessBusy(false); }
+  }
+  if (!accessCode) return <main className="chat-only" data-experience="planning-chat-only" data-answer-mode="ai-choices" data-access="invite-required">
+    <header><span className="brand"><Compass size={23}/>知途</span></header>
+    <section className="invite-screen"><span className="invite-kicker">朋友体验</span><h1>聊聊你的留学计划</h1><p>几分钟对话，了解自己的方向和下一步。</p><form onSubmit={unlock}><label htmlFor="invite-code">访问口令</label><input id="invite-code" type="password" autoComplete="off" value={invite} onChange={event=>setInvite(event.target.value)} placeholder="输入分享者给你的口令" maxLength={128} required/><Button type="submit" disabled={!invite.trim() || accessBusy}>{accessBusy ? '正在进入…' : '进入对话'}<ArrowUpRight size={16}/></Button></form>{accessNotice && <p className="invite-error" role="alert">{accessNotice}</p>}<small>无需注册。口令仅在本页使用，不会保存在浏览器中。</small></section>
+  </main>;
   return <main className="chat-only" data-experience="planning-chat-only" data-answer-mode="ai-choices">
     <header><span className="brand"><Compass size={23}/>知途</span><button className="reset" onClick={reset}><RotateCcw size={15}/>重新开始</button></header>
     <div className="heading"><h1>{report ? '你的留学初步规划' : '聊聊你的计划'}</h1><p>{report ? '从了解自己，到知道下一步做什么。' : '点击选择，AI 会根据你的回答继续提问。'}</p></div>
@@ -117,4 +140,5 @@ export default function Page() {
     <footer>由 DeepSeek 提供 AI 支持 · 回答仅保留在本页，离开前可下载报告</footer>
   </main>;
 }
+
 
