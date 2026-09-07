@@ -21,7 +21,7 @@ summary用2–3句话指出目前最需要解决的问题；strengths只列有�
 JSON格式：{"summary":"...","strengths":["..."],"unknowns":["..."],"actions":[{"title":"...","detail":"..."}],"serviceNeeds":[{"name":"...","reason":"...","deliverable":"..."}]}。`;
   const goals = { plan: '把准备细化为未来30天的行动安排，按周写清工作和可检验成果，不承诺30天能提分或发表论文。', direction: '给出2–3条值得探索的方向，逐条说明适合的前提、需要核实的点和比较方法。不要因为预算或成绩未知擅自排除路径。', brief: '整理给顾问看的咨询准备清单：目标与主要困惑、需要补充的材料、需要核实的顾问经验、期望的服务交付。末尾的问题供学生咨询时使用。不要声称已匹配、提交或预约，也不添加学生未提供的个人资料。' };
   return `${common}\n任务：${goals[data.topic!]}
-只基于已有问答，缺少的信息明确列出，不重复生成整份报告。
+只基于已有问答，缺少的信息明确列出，不重复生成整份报告。steps必须是2至6个对象，每项只有title与detail两个字符串；questions必须是1至6个字符串。title不超过100字，summary不超过500字，每项detail不超过400字。
 JSON格式：{"title":"...","summary":"...","steps":[{"title":"...","detail":"..."}],"questions":["下一步需确认的问题"]}。`;
 }
 function json(body: unknown, status = 200) { return Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } }); }
@@ -42,31 +42,36 @@ export async function POST(request: Request) {
   const key = runtime.DEEPSEEK_API_KEY;
   if (!key) return json({ error: 'AI 服务尚未配置好，请稍后再试。' }, 503);
   // ponytail: Sites owner-only access bounds this pilot; add per-user quotas before opening it to a wider audience.
+  const timeout = AbortSignal.timeout(55000);
   try {
-    const response = await fetch('https://api.deepseek.com/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: runtime.DEEPSEEK_MODEL || 'deepseek-v4-flash', thinking: { type: 'disabled' }, response_format: { type: 'json_object' }, stream: false, max_tokens: data.mode === 'question' ? 650 : 2600, temperature: 0.3, messages: [{ role: 'system', content: instruction(data) }, { role: 'user', content: JSON.stringify({ date: new Date().toISOString().slice(0, 10), turns: data.turns }) }] }),
-      signal: AbortSignal.timeout(55000),
-    });
-    if (!response.ok) {
-      const message = response.status === 402 ? 'AI 账户余额不足，请联系网站负责人。' : response.status === 401 ? 'AI 服务认证失败，请联系网站负责人。' : response.status === 429 ? 'AI 服务繁忙，请稍后重试。' : 'AI 服务暂时不可用，请稍后重试。';
-      return json({ error: message }, 503);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: runtime.DEEPSEEK_MODEL || 'deepseek-v4-flash', thinking: { type: 'disabled' }, response_format: { type: 'json_object' }, stream: false, max_tokens: data.mode === 'question' ? 650 : 2600, temperature: attempt ? 0 : 0.3, messages: [{ role: 'system', content: instruction(data) + (attempt ? '\n上一次响应格式不符合要求。请严格使用示例中的字段名称、数据类型和数组数量，缩短文字，输出完整JSON，不添加其他文字。' : '') }, { role: 'user', content: JSON.stringify({ date: new Date().toISOString().slice(0, 10), turns: data.turns }) }] }),
+        signal: timeout,
+      });
+      if (!response.ok) {
+        const message = response.status === 402 ? 'AI 账户余额不足，请联系网站负责人。' : response.status === 401 ? 'AI 服务认证失败，请联系网站负责人。' : response.status === 429 ? 'AI 服务繁忙，请稍后重试。' : 'AI 服务暂时不可用，请稍后重试。';
+        return json({ error: message }, 503);
+      }
+      try {
+        const completion = await response.json() as { choices?: { finish_reason?: string; message?: { content?: string } }[] };
+        const choice = completion.choices?.[0];
+        if (!choice?.message?.content || choice.finish_reason === 'length') throw new Error('Incomplete output');
+        const output = JSON.parse(choice.message.content);
+        if (data.mode === 'question') {
+          const question = parseQuestion(output, data.turns.length);
+          if (question.kind === 'question' && data.turns.some(turn => turn.question === question.question)) throw new Error('Repeated question');
+          return json(question);
+        }
+        return data.mode === 'report' ? json({ kind: 'report', report: parseReport({ ...output, profile: data.turns.map(turn => ({ label: turn.question, value: turn.answer })) }) }) : json({ kind: 'followup', followup: parseFollowup(output) });
+      } catch {
+        if (attempt === 1) return json({ error: 'AI 返回的内容暂时无法使用，请重试。你的回答没有丢失。' }, 502);
+      }
     }
-    const completion = await response.json() as { choices?: { finish_reason?: string; message?: { content?: string } }[] };
-    const choice = completion.choices?.[0];
-    if (!choice?.message?.content || choice.finish_reason === 'length') return json({ error: 'AI 没有返回完整结果，请重试。' }, 502);
-    const output = JSON.parse(choice.message.content);
-    if (data.mode === 'question') {
-      const question = parseQuestion(output, data.turns.length);
-      if (question.kind === 'question' && data.turns.some(turn => turn.question === question.question)) return json({ error: 'AI 返回了重复问题，请重试这一轮。' }, 502);
-      return json(question);
-    }
-    return data.mode === 'report' ? json({ kind: 'report', report: parseReport({ ...output, profile: data.turns.map(turn => ({ label: turn.question, value: turn.answer })) }) }) : json({ kind: 'followup', followup: parseFollowup(output) });
+    return json({ error: 'AI 暂时无法生成结果，请重试。' }, 502);
   } catch (error) {
-    return json({ error: error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? '这次响应时间较长，请重试。你的回答仍保留在当前页面。' : 'AI 返回的内容暂时无法使用，请重试。你的回答没有丢失。' }, 502);
+    return json({ error: error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? '这次响应时间较长，请重试。你的回答仍保留在当前页面。' : 'AI 连接中断，请重试。你的回答没有丢失。' }, 502);
   }
 }
-
-
-

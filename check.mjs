@@ -45,3 +45,19 @@ if(process.argv[3] === '--live') {
  console.log(JSON.stringify({undergraduateQuestion:next},null,2));
  console.log('Real DeepSeek question, report and consultant brief calls passed.');
 }
+// Exercise the route's format-repair path with deterministic provider responses.
+const fs = await import('node:fs');
+const ts = await import('typescript');
+const compiled = ts.default.transpileModule(fs.readFileSync('app/api/assessment/route.ts','utf8'),{compilerOptions:{target:ts.default.ScriptTarget.ES2022,module:ts.default.ModuleKind.ESNext}}).outputText.replace(/^import .*;\r?\n/gm,'').replace('export async function POST','async function POST');
+const makeHandler = mock => new Function('env','fetch','parseRequest','parseQuestion','parseReport','parseFollowup',compiled+'\nreturn POST;')({DEEPSEEK_API_KEY:'test-only'},mock,parseRequest,parseQuestion,parseReport,parseFollowup);
+const body={mode:'followup',topic:'brief',turns:Array(3).fill({question:'申请阶段？',answer:'硕士'})};
+const validFollowup={title:'咨询清单',summary:'先确认具体需求',steps:[{title:'整理背景',detail:'整理成绩口径'},{title:'确认目标',detail:'整理专业兴趣'}],questions:['需要哪类帮助？']};
+let attempts=0;
+const handler=makeHandler(async()=>{attempts++;return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(attempts===1?{bad:'shape'}:validFollowup)}}]});});
+const repaired=await handler(new Request('https://unit.test/api/assessment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
+assert.equal(repaired.status,200);assert.equal(attempts,2);assert.equal((await repaired.json()).kind,'followup');
+attempts=0;
+const unavailable=makeHandler(async()=>{attempts++;return new Response('',{status:401});});
+const rejected=await unavailable(new Request('https://unit.test/api/assessment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
+assert.equal(rejected.status,503);assert.equal(attempts,1);
+console.log('Malformed provider output retries once; authentication failure does not retry.');
