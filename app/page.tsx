@@ -1,42 +1,59 @@
 'use client';
-import {useState, useEffect, useRef} from 'react';
-import {flushSync} from 'react-dom';
-import {ArrowUp, ArrowUpRight, Compass, Check, ChevronRight, FileText, GraduationCap, Sparkles, ShieldCheck, RotateCcw, Pencil, BookOpen, Users, Clock, Download} from 'lucide-react';
-import {Button} from '@/components/ui/button';
-import {Tabs,TabsList,TabsTrigger} from '@/components/ui/tabs';
-import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
-import {Progress} from '@/components/ui/progress';
-const labels=['申请阶段','背景与成绩','地区与方向','入学时间','语言与相关经历','留学预算与资助','进度与主要诉求'];
-const prompts=['你计划申请哪个阶段？','说说你现在的学校、年级和成绩吧。成绩请带上满分制；学校名称可以暂不透露。','你想去哪里，学习什么方向？还没确定也没关系。','你希望什么时候入学？时间可以调整吗？','你的语言准备和相关经历怎么样？','留学总预算大约是多少？是否必须获得奖学金或资助？','你准备到哪一步了？现在最希望有人帮你解决什么？'];
-const tips=['本科、硕士和博士的准备重点不同，我们会根据你的目标调整问题。','成绩需要结合课程体系和满分制理解。初筛阶段不需要上传成绩单。','方向未定很正常。可以先比较学习兴趣、课程内容和未来计划。','先确定目标时间，再倒推语言、材料和申请安排；具体截止日期需逐校核实。','经历的相关性和你的实际贡献，比单纯列出数量更有帮助。','留学费用与顾问服务费是两笔预算。这里先了解留学总预算。','我们先找到你要解决的问题，再判断是否需要付费协助。'];
-const samples=['硕士','国内本科大三，金融专业，均分85/100','香港或英国，金融方向','2027年秋季，可以调整','雅思备考中，有一段银行实习','总预算40万元，不必须获得资助','刚开始准备，希望了解选校定位和申请时间安排'];
-const services=[{name:'方向探索咨询',tag:'先把方向想清楚',price:'299',desc:'梳理地区、专业与个人目标之间的关系。',delivery:'45分钟线上咨询 + 一份方向比较清单',boundary:'不包含选校清单、材料修改或录取承诺。',action:'列出你最看重的三个因素：学习内容、总成本、未来计划。'}, {name:'申请定位与计划',tag:'把目标变成步骤',price:'499',desc:'结合现有背景，梳理目标与准备先后顺序。',delivery:'60分钟线上咨询 + 一份申请准备时间表',boundary:'不包含代提交、文书修改或录取承诺。',action:'整理成绩口径、相关课程与经历，逐项核实目标项目要求。'}, {name:'申请材料反馈',tag:'让表达更清晰',price:'399',desc:'针对已有简历或个人陈述给出结构与表达建议。',delivery:'一份材料的批注反馈 + 一次30分钟沟通',boundary:'需要已有草稿；不包含代写、翻译或无限次修改。',action:'先检查材料是否用具体事例说明动机、贡献和相关能力。'}, {name:'研究方向梳理',tag:'找到研究交集',price:'699',desc:'围绕研究兴趣、已有经验与导师方向梳理下一步。',delivery:'60分钟研究讨论 + 一份研究探索行动清单',boundary:'不包含论文代写、导师录取承诺或科研成果保证。',action:'整理一个研究问题、相关阅读，以及你在已有项目中的具体贡献。'}];
-// ponytail: keyword routing demonstrates the journey; replace with validated server-side structured extraction when an API is connected.
-function recommend(a:string[]){if(a[0]==='博士')return 3; if(/材料|文书|简历|草稿/.test(a[6]||''))return 2;if(/没确定|没想好|不确定|探索/.test(a[2]||''))return 0;return 1;}
-export default function Page(){
- const [answers,setAnswers]=useState<string[]>([]),[input,setInput]=useState(''),[view,setView]=useState('chat'),[confirmed,setConfirmed]=useState(false),[editing,setEditing]=useState(false),[modal,setModal]=useState<number|null>(null),[interest,setInterest]=useState(''),[join,setJoin]=useState(false),[joined,setJoined]=useState(false);
- useEffect(()=>{
-  const context=(document as Document & {modelContext?:{registerTool:(tool:unknown,options:{signal:AbortSignal})=>void|Promise<void>}}).modelContext;
-  if(!context)return;
-  const lifecycle=new AbortController();
-  try{Promise.resolve(context.registerTool({name:'start_sample_assessment',description:'Load a clearly labeled sample student profile into the visible assessment. Replaces current in-page answers only when replace is true.',inputSchema:{type:'object',properties:{replace:{type:'boolean',const:true}},required:['replace'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:false},execute:(input:unknown)=>{if(!input||typeof input!=='object'||(input as {replace?:unknown}).replace!==true)throw new Error('replace must be true');flushSync(()=>{setAnswers([...samples]);setConfirmed(false);setView('chat')});return {status:'sample_loaded',fields:7,requiresConfirmation:true}}},{signal:lifecycle.signal})).catch(()=>{});}catch{}
-  return ()=>lifecycle.abort();
- },[]);
- const end=useRef<HTMLDivElement>(null); const step=answers.length, done=step===7, rec=recommend(answers);
- useEffect(()=>{end.current?.scrollIntoView({block:'nearest',behavior:'smooth'})},[step]);
- function send(value:string){if(!value.trim()||done)return;setAnswers([...answers,value.trim()]);setInput('');setConfirmed(false)}
- function demo(){setAnswers([...samples]);setConfirmed(false);setView('chat')}
- function exportProfile(){const b=new Blob([JSON.stringify({演示:true,档案:Object.fromEntries(labels.map((l,i)=>[l,answers[i]||'待了解'])),需求需人工复核:true},null,2)],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='知途-申请档案.json';a.click();URL.revokeObjectURL(u)}
- return <div className="shell"><header><a className="brand" href="/" aria-label="知途首页"><span className="brand-icon"><Compass size={25}/></span>知途<span className="brand-en">PATHWISE</span></a><div className="header-note">每一个选择，都更了解自己。</div><button className="join-link" onClick={()=>setJoin(true)}>顾问入驻 <ArrowUpRight size={16}/></button><span className="demo-pill">体验版</span></header>
- <div className="workspace"><aside className="journey"><div><div className="eyebrow">YOUR NEXT CHAPTER</div><h1>下一站，<br/>从了解自己开始。</h1><p className="muted intro">几分钟，理清留学方向。<br/>需要帮助时，再找到对的人。</p></div><div className="steps">{[['了解你的背景','从你的现状出发'],['梳理下一步','看清目标与准备重点'],['选择合适的帮助','自己决定如何向前']].map(([t,s],i)=><div key={t} className={'step '+((i===0&&view==='chat'||i===1&&view==='plan'||i===2&&view==='services')?'active':'')}><span className="step-number">{i===0&&done?<Check size={16}/>:String(i+1).padStart(2,'0')}</span><div><b>{t}</b><p>{s}</p></div></div>)}</div><div className="journey-bottom"><ShieldCheck size={22}/><b>选择权，始终在你</b><p>初筛与撮合免费。查看建议不需要购买服务。</p><small>演示回答仅保留在本页，刷新会清空。请勿输入敏感信息。</small></div></aside>
- <main><div className="main-heading"><h2>聊聊你的计划</h2></div><div className="main-heading"><div><span className="eyebrow">留学探索工作台</span><h2>{view==='chat'?'先聊聊你的计划':view==='plan'?'你的下一步，逐渐清晰':'找到适合现在的帮助'}</h2></div><button className="icon-button" title="使用示例档案" onClick={demo}><Sparkles size={17}/> 体验示例</button></div><Tabs value={view} onValueChange={v=>setView(String(v))}><TabsList className="page-tabs" variant="line"><TabsTrigger value="chat">初筛对话</TabsTrigger><TabsTrigger value="plan" disabled={!confirmed}>方向与行动</TabsTrigger><TabsTrigger value="services" disabled={!confirmed}>服务与顾问</TabsTrigger></TabsList></Tabs>
- {view==='chat'?<section className="chat-panel"><div className="chat-top"><span className="assistant-mark"><Compass size={20}/></span><div><b>知途 · 探索助手</b><small><span className="status-dot"/> 规则演示 · 尚未连接 AI</small></div><span className="duration"><Clock size={14}/> 约3–5分钟</span></div><div className="messages" aria-live="polite"><div className="message assistant"><span className="mini-mark">✳</span><div><b>你好，欢迎来到知途。</b><p>不用先想好所有答案。我们一起梳理你的背景和目标，再看看哪些事可以自己做、哪些帮助值得考虑。</p><p>{prompts[0]}</p></div></div>{answers.map((a,i)=><div key={i}><div className="message user"><div>{a}</div><span className="user-mark">我</span></div><div className="message assistant"><span className="mini-mark">✳</span><div><p className="response-note">{i===0?`好的，我们从${a}申请的角度继续。`:tips[i]}</p><p>{i===6?'基础信息已经整理好了。请核对右侧档案，确认后查看下一步建议。':i===3?(answers[0]==='博士'?'你的语言准备、研究兴趣和研究经历如何？可以说说你在项目中的具体贡献。':answers[0]==='本科'?'你在学什么课程体系？语言、标化和课外活动准备如何？':prompts[4]):prompts[i+1]}</p></div></div></div>)}<div ref={end}/></div>{!done?<div className="composer"><div className="quick-replies">{(step===0?['本科','硕士','博士']:step===2?['英国 / 商科','香港 / 计算机','还没确定']:step===3?['2027年秋季','2028年秋季','时间还没确定']:[]).map(q=><button key={q} onClick={()=>send(q)}>{q}<ArrowUpRight size={14}/></button>)}</div><form onSubmit={e=>{e.preventDefault();send(input)}}><textarea aria-label="你的回答" placeholder={step===0?'选择申请阶段，开启对话…':'说说你的情况，也可以回答“暂不确定”…'} value={input} disabled={step===0} maxLength={1500} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send(input)}}}/><button className="send" aria-label="发送回答" disabled={!input.trim()||step===0} type="submit"><ArrowUp size={20}/></button></form><div className="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span>{step>0&&<button onClick={()=>send('暂不确定')}>暂不确定，继续</button>}</div></div>:<div className="complete-bar"><Check size={19}/><span>已完成初筛 · 核对档案后继续</span><Button onClick={()=>{setConfirmed(true);setView('plan')}}>确认档案，查看建议 <ChevronRight size={16}/></Button></div>}</section>:view==='plan'?<section className="results"><div className="summary-card"><span className="eyebrow">YOUR STARTING POINT</span><h3>先解决「{services[rec].name.replace('咨询','').replace('反馈','准备')}」</h3><p>你正在考虑{answers[0]}申请，意向是「{answers[2]}」。你最关心的是「{answers[6]}」。</p><span className="subtle-tag">根据当前回答的初步整理 · 可修改</span></div><h3 className="section-title">值得优先做的两件事</h3>{[services[rec].action,'结合「'+answers[3]+'」的时间意向，列出准备事项；项目要求与截止日期需要通过官方信息逐项核实。'].map((t,i)=><div className="action-row" key={t}><span>0{i+1}</span><div><b>{i===0?'把关键问题具体化':'把准备放进时间表'}</b><p>{t}</p></div><Check size={18}/></div>)}<div className="self-card"><BookOpen size={23}/><div><b>这些，你也可以自己完成</b><p>整理成绩和经历，记录目标项目要求，再比较尚未满足的条件。当前信息不足以判断录取概率。</p></div></div><Button className="wide-cta" onClick={()=>setView('services')}>看看有哪些可选帮助 <ArrowUpRight size={17}/></Button><p className="muted fine">不急着购买。先核实需求，再比较服务范围与费用。</p></section>:<section className="results"><div className="service-heading"><div><h3>从一个具体问题开始</h3><p>展示与当前需求相关的服务，也保留自行准备的选择。</p></div><span className="subtle-tag">演示服务与顾问</span></div>{[rec,...[0,1,2,3].filter(i=>i!==rec)].slice(0,2).map((id,index)=><article className="service-card" key={id}><div className="service-icon">{id===3?<GraduationCap/>:<FileText/>}</div><div className="service-copy"><span className="service-tag">{index===0?'优先了解':'备选 · 需求确认后考虑'}</span><h3>{services[id].name}</h3><p>{services[id].desc}</p><small>{services[id].delivery}</small><div className="advisor-line"><span className="avatar">{answers[0]==='博士'?'研':'途'}</span><span>{answers[0]==='博士'?'研究规划顾问 A':'申请规划顾问 B'} · 虚构示例</span></div></div><div className="service-price"><span>示例价格</span><strong>¥{services[id].price}</strong><button onClick={()=>{setModal(id);setInterest('')}}>查看详情 <ArrowUpRight size={15}/></button></div></article>)}<div className="self-card"><ShieldCheck/><div><b>免费撮合，服务按需选择</b><p>顾问资料、经验与价格均为演示。真实匹配还需核验地区、专业、预算与接单状态；本页不会付款或转交档案。</p></div></div></section>}
- <div className="main-footer"><ShieldCheck size={14}/> 先了解，再选择。你的档案不会自动发送给顾问。</div></main>
- <aside className="profile"><div className="profile-heading"><span className="profile-symbol"><FileText size={21}/></span><h3>我的申请档案</h3><span className="live-label">随聊整理</span></div><div className="progress-line"><span>基础信息</span><b>{step} / 7</b></div><Progress value={step/7*100} aria-label="档案完成进度"/><div className="profile-fields">{labels.map((l,i)=><div className="profile-field" key={l}><span>{l}</span><p className={!answers[i]?'pending':''}>{answers[i]||'等待了解'}{answers[i]&&<Check size={13}/>}</p></div>)}</div><button className="edit-profile" disabled={!step} onClick={()=>setEditing(true)}><Pencil size={14}/> 修改已填信息</button><div className="insight"><span><Sparkles size={16}/> 一点小提示</span><p>{tips[Math.min(step,6)]}</p></div><button className="download" disabled={!done} onClick={exportProfile}><Download size={15}/> 导出我的档案</button></aside></div>
- <Dialog open={editing} onOpenChange={setEditing}><DialogContent className="custom-dialog"><DialogTitle>核对申请档案</DialogTitle><DialogDescription>修改后重新确认，建议会根据你的回答更新。</DialogDescription><form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);setAnswers(answers.map((a,i)=>i===0?a:String(f.get(String(i))||a)));setConfirmed(false);setView('chat');setEditing(false)}}><div className="edit-fields">{answers.map((a,i)=><label key={i}>{labels[i]}{i===0?<p>{a} <small>如需更换申请阶段，请重新开始。</small></p>:<textarea name={String(i)} defaultValue={a} required maxLength={1500}/>}</label>)}</div><Button type="submit">保存修改</Button><button type="button" className="reset" onClick={()=>{setAnswers([]);setView('chat');setConfirmed(false);setEditing(false);setInput('')}}><RotateCcw size={14}/> 重新开始</button></form></DialogContent></Dialog>
- <Dialog open={modal!==null} onOpenChange={o=>{if(!o)setModal(null)}}><DialogContent className="custom-dialog"><DialogTitle>{services[modal??0].name}</DialogTitle><DialogDescription>演示服务 · 价格与顾问为虚构内容</DialogDescription><h3 className="dialog-price">¥{services[modal??0].price}</h3><b>你会得到什么</b><p>{services[modal??0].delivery}</p><b>服务边界</b><p>{services[modal??0].boundary}</p><b>为什么展示给你</b><p>供你围绕「{answers[6]}」比较帮助方式。具体适配仍需核实顾问经验、服务预算和时间。</p><p className="muted">正式购买前应确认实际服务人、交付周期及取消退款规则。</p><Button onClick={()=>setInterest('已在当前页面记录意向。演示不会预约、付款或发送档案。')}>我对这项服务感兴趣</Button>{interest&&<p role="status" className="success-note">{interest}</p>}</DialogContent></Dialog>
- <Dialog open={join} onOpenChange={setJoin}><DialogContent className="custom-dialog"><DialogTitle>顾问入驻意向</DialogTitle><DialogDescription>演示表单，仅用于体验；信息不会上传或保存。</DialogDescription>{joined?<div className="success-note"><Check/> 已完成入驻流程演示。正式入驻需要身份与经验核验。</div>:<form className="join-form" onSubmit={e=>{e.preventDefault();setJoined(true)}}>{['姓名 / 机构名称','实际服务顾问','擅长的申请阶段、地区和专业','可提供的服务、交付内容与价格'].map(l=><label key={l}>{l}<input required maxLength={300} placeholder={l}/></label>)}<Button type="submit">完成入驻演示 <Users size={16}/></Button></form>}</DialogContent></Dialog>
- </div>
+import { useEffect, useRef, useState } from 'react';
+import { ArrowUp, Compass, RotateCcw } from 'lucide-react';
+
+const questions = [
+  '你计划申请本科、硕士，还是博士？',
+  '你现在读到哪个阶段？可以说说专业和成绩，学校名称可以暂不透露。',
+  '有想去的国家、地区或专业方向吗？还没确定也没关系。',
+  '你希望什么时候入学？',
+  '你的语言准备和相关经历怎么样？',
+  '留学总预算大约是多少？是否需要奖学金或资助？',
+  '你现在最想解决的一个问题是什么？',
+];
+
+export default function Page() {
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [input, setInput] = useState('');
+  const end = useRef<HTMLDivElement>(null);
+  const step = answers.length;
+  const done = step >= questions.length;
+  useEffect(() => { end.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [step]);
+  function send(value: string) {
+    if (!value.trim() || done) return;
+    setAnswers(current => [...current, value.trim()]);
+    setInput('');
+  }
+  function reset() { setAnswers([]); setInput(''); }
+  function nextQuestion(index: number) {
+    if (index === 3 && answers[0] === '博士') return '你有哪些研究兴趣和研究经历？语言准备到哪一步了？';
+    if (index === 3 && answers[0] === '本科') return '你的课程体系、语言和课外活动准备如何？';
+    return questions[index + 1];
+  }
+  return <main className="chat-only" data-experience="planning-chat-only">
+    <header>
+      <span className="brand"><Compass size={23} />知途</span>
+      <button className="reset" onClick={reset}><RotateCcw size={15} />重新开始</button>
+    </header>
+    <div className="heading"><h1>聊聊你的计划</h1><p>先从你的情况说起。</p></div>
+    <section className="conversation" aria-label="留学计划对话">
+      <div className="messages" role="log" aria-live="polite">
+        <div className="message assistant"><span className="avatar"><Compass size={18}/></span><div><p>你好，不用一次想清所有答案。</p><p>{questions[0]}</p></div></div>
+        {answers.map((answer, index) => <div key={index}>
+          <div className="message user"><div>{answer}</div></div>
+          <div className="message assistant"><span className="avatar"><Compass size={18}/></span><div>{index === questions.length - 1 ? '本轮演示已结束。连接 AI 后，才能根据你的回答继续动态追问。' : nextQuestion(index)}</div></div>
+        </div>)}
+        <div ref={end}/>
+      </div>
+      {!done ? <div className="composer">
+        {step === 0 && <div className="choices">{['本科', '硕士', '博士'].map(value => <button key={value} onClick={() => send(value)}>{value}</button>)}</div>}
+        <form onSubmit={event => { event.preventDefault(); send(input); }}>
+          <textarea aria-label="你的回答" placeholder="说说你的情况…" value={input} onChange={event => setInput(event.target.value)} maxLength={1500} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(input); } }}/>
+          <button className="send" type="submit" disabled={!input.trim()} aria-label="发送"><ArrowUp size={20}/></button>
+        </form>
+        <div className="input-help"><span>Enter 发送 · Shift + Enter 换行</span>{step > 0 && <button onClick={() => send('暂不确定')}>暂不确定</button>}</div>
+      </div> : <button className="restart" onClick={reset}>重新聊聊</button>}
+    </section>
+    <footer>演示对话 · 尚未连接 AI · 刷新后回答清空</footer>
+  </main>;
 }
-
-
