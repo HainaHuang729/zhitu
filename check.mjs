@@ -1,19 +1,47 @@
 import assert from 'node:assert/strict';
-import { getQuestions } from './lib/questions.ts';
-for (const stage of ['本科', '硕士', '博士', '暂不确定']) {
-  const questions = getQuestions(stage);
-  assert.equal(questions.length, 10);
-  for (const question of questions) {
-    assert.ok(question.title && question.options.length >= 3);
-    assert.equal(new Set(question.options).size, question.options.length);
-  }
-  assert.ok(questions[6].title.includes(stage === '本科' ? '课程体系' : stage === '博士' ? '研究经历' : '相关经历'));
+import { parseRequest, parseQuestion, parseReport, parseFollowup } from './lib/assessment.ts';
+const turns=[{question:'申请阶段？',answer:'硕士'}];
+assert.equal(parseRequest({mode:'question',turns}).turns.length,1);
+assert.throws(()=>parseRequest({mode:'report',turns}));
+assert.throws(()=>parseRequest({mode:'question',turns:[{question:'',answer:'硕士'}]}));
+assert.throws(()=>parseRequest({mode:'question',turns:Array(11).fill(turns[0])}));
+assert.throws(()=>parseRequest({mode:'followup',turns:Array(3).fill(turns[0]),topic:'purchase'}));
+assert.throws(()=>parseQuestion({kind:'complete'},1));
+assert.equal(parseQuestion({kind:'complete'},6).kind,'complete');
+assert.ok(parseQuestion({kind:'question',feedback:'先确认背景。',question:'目前阶段？',options:['本科在读','已毕业']},1).options.includes('暂不确定'));
+assert.throws(()=>parseQuestion({kind:'question',feedback:'反馈',question:'问题',options:['A','A']},2));
+assert.throws(()=>parseReport({summary:'没有足够结构'}));
+assert.throws(()=>parseFollowup({title:'没有步骤'}));
+if(process.argv[2]){
+ const base=process.argv[2];
+ const response=await fetch(base);assert.equal(response.status,200);
+ const html=await response.text();
+ assert.ok(html.includes('data-answer-mode="ai-choices"'));
+ assert.ok(!html.includes('尚未连接 AI'));
+ for(const removed of ['顾问入驻','我的申请档案','<textarea'])assert.ok(!html.includes(removed));
+ const invalid=await fetch(new URL('/api/assessment',base),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'question',turns:[]})});assert.equal(invalid.status,400);
+ const cross=await fetch(new URL('/api/assessment',base),{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://example.invalid'},body:JSON.stringify({mode:'question',turns})});assert.equal(cross.status,403);
 }
-if (process.argv[2]) {
-  const response = await fetch(process.argv[2]);
-  assert.equal(response.status, 200);
-  const html = await response.text();
-  for (const required of ['planning-chat-only', 'data-answer-mode="choices"', '聊聊你的计划', '本科', '硕士', '博士', '暂不确定']) assert.ok(html.includes(required), required);
-  for (const removed of ['<textarea', '顾问入驻', '我的申请档案', '服务与顾问', '体验示例']) assert.ok(!html.includes(removed), removed);
+console.log('Assessment schema, limits, optional-answer handling and route safeguards passed.');
+if(process.argv[3] === '--live') {
+ const turns=[
+  {question:'你计划申请哪个阶段？',answer:'硕士'},
+  {question:'目前的教育背景？',answer:'国内本科大三，金融专业，均分85/100'},
+  {question:'意向地区和专业？',answer:'香港或新加坡，纠结金融与商业分析'},
+  {question:'希望什么时候入学？',answer:'2027年秋季，可调整'},
+  {question:'语言和经历？',answer:'雅思备考中，有两个月银行实习，学过Python'},
+  {question:'预算与资助？',answer:'总预算45万元，不必须资助'},
+  {question:'目前最想解决的问题？',answer:'专业方向选择与准备优先级，不想买全套服务'},
+ ];
+ async function call(body){
+  const response=await fetch(new URL('/api/assessment',process.argv[2]),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const result=await response.json();assert.equal(response.status,200,JSON.stringify(result));return result;
+ }
+ const report=await call({mode:'report',turns});assert.equal(report.kind,'report');parseReport(report.report);
+ console.log(JSON.stringify({report:report.report},null,2));
+ const followup=await call({mode:'followup',turns,topic:'brief'});assert.equal(followup.kind,'followup');parseFollowup(followup.followup);
+ console.log(JSON.stringify({followup:followup.followup},null,2));
+ const next=await call({mode:'question',turns:[{question:'你计划申请哪个阶段？',answer:'本科'}]});assert.equal(next.kind,'question');assert.notEqual(next.question,'你计划申请哪个阶段？');
+ console.log(JSON.stringify({undergraduateQuestion:next},null,2));
+ console.log('Real DeepSeek question, report and consultant brief calls passed.');
 }
-console.log('Choice questions verified for all stages; served page checked when URL supplied.');
